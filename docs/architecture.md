@@ -107,9 +107,10 @@ root that builds the loop from a config.
    byte offset), approval decisions and the user stop flag.
 2. **Reconcile** the registry by folding events, then probe run locks to find
    runs whose supervisor died (status becomes `lost`). An assigned run whose
-   assign message was handled but which never launched within 240 s is also
-   `lost`. A lost run, or a crashed run its worker judged `retry`, is re-run
-   once under a new run ID (purpose `retry`, same round, same config and seed).
+   assign message was handled but which never launched within 240 s of being
+   assigned is also `lost`. A lost run, or a crashed run its worker judged
+   `retry`, is re-run once under a new run ID (purpose `retry`, same round,
+   same config and seed); no retries are allocated once a stop is in progress.
    A crashed run gets a `debug` message to its worker.
 3. **Observe** (`observe/`): per-run `CurveSummary` from telemetry, plus
    tracebacks from `stdout.log` and a tail of each worker pane.

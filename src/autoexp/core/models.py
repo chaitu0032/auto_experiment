@@ -112,6 +112,7 @@ class RunRecord:
     worker_id: WorkerId | None
     device_id: DeviceId | None
     allocated_at: float
+    assigned_at: float | None = None
     started_at: float | None = None
     ended_at: float | None = None
     exit_code: int | None = None

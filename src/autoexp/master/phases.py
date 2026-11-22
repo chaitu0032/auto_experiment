@@ -112,8 +112,9 @@ def reconcile(d: MasterDeps, records: tuple[RunRecord, ...], now: float) -> None
         elif (
             r.status is RunStatus.ASSIGNED
             and r.worker_id is not None
+            and r.assigned_at is not None
             and d.inbox.is_handled(r.worker_id, assign_msg_id(rid))
-            and now - r.allocated_at > LAUNCH_TIMEOUT_S
+            and now - r.assigned_at > LAUNCH_TIMEOUT_S
             and not d.locks.probe(d.layout.run_lock(rid))
         ):
             mark_lost(d.registry, rid, "assigned but never launched")

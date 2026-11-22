@@ -233,3 +233,52 @@ def test_answered_code_change_is_delivered_to_a_worker(finished: StateLayout) ->
     phases.deliver_approval_results(deps, list_workers(finished))
     (message,) = [m for m in deps.inbox.pending(WorkerId("w1")) if m.msg_id == "code-r1-1-result"]
     assert message.kind is InboxKind.APPROVAL_RESULT and message.body["diff"] == "--- a"
+
+
+def test_launch_timeout_counts_from_assignment_not_allocation(tmp_path: Path) -> None:
+    from autoexp.core.ids import DeviceId
+    from autoexp.core.models import EventSource, InboxKind, ProposedRun, RunEvent, RunEventKind
+    from autoexp.master import phases
+    from autoexp.state.recovery import assign_msg_id
+
+    master, _ = _master(loop_config(), tmp_path / "exp")
+    deps = master._d  # noqa: SLF001 - exercising one phase directly
+    spec = deps.registry.allocate(ProposedRun(config={}, seed=1, purpose=RunPurpose.EXPLORE), 1)
+    allocated_at = deps.registry.get(spec.run_id).allocated_at  # type: ignore[union-attr]
+    assigned_at = allocated_at + 10 * phases.LAUNCH_TIMEOUT_S
+    deps.registry.append(
+        RunEvent(
+            run_id=spec.run_id,
+            at=assigned_at,
+            kind=RunEventKind.ASSIGNED,
+            source=EventSource.MASTER,
+            data={"worker_id": "w1", "device_id": "cpu0"},
+        )
+    )
+    worker = WorkerId("w1")
+    message = deps.inbox.post(
+        worker,
+        assign_msg_id(spec.run_id),
+        InboxKind.ASSIGN,
+        {"run_id": spec.run_id, "device_id": DeviceId("cpu0")},
+    )
+    assert message is not None
+    deps.inbox.ack(message)
+
+    phases.reconcile(deps, deps.registry.all(), assigned_at + 5.0)
+    assert deps.registry.get(spec.run_id).status is RunStatus.ASSIGNED  # type: ignore[union-attr]
+    phases.reconcile(deps, deps.registry.all(), assigned_at + phases.LAUNCH_TIMEOUT_S + 1.0)
+    assert deps.registry.get(spec.run_id).status is RunStatus.LOST  # type: ignore[union-attr]
+
+
+def test_runs_lost_to_a_stop_are_not_retried(tmp_path: Path) -> None:
+    config = loop_config(**{"devices.max_concurrent_runs": 2, "workers.runs_per_worker": 1})
+    master, layout = _master(config, tmp_path / "exp")
+    master.run(max_ticks=1, sleep=False)
+    queued = [r for r in load_registry(layout).all() if r.status is RunStatus.ALLOCATED]
+    assert queued, "runs beyond capacity wait in ALLOCATED"
+    layout.stop_flag.write_text("stop")
+    master.run(max_ticks=4, sleep=False)
+    runs = load_registry(layout).all()
+    assert any(r.status is RunStatus.LOST for r in runs)
+    assert not [r for r in runs if r.spec.purpose is RunPurpose.RETRY]
