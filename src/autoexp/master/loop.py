@@ -56,6 +56,7 @@ class LoopState:
     cache: TelemetryCache = field(default_factory=TelemetryCache)
     seen_prunes: frozenset[RunId] = frozenset()
     seen_rungs: frozenset[str] = frozenset()
+    pruned_rungs: frozenset[str] = frozenset()
     seen_finished: frozenset[RunId] = frozenset()
     relayed: Mapping[WorkerId, int] = field(default_factory=dict)
     stop: StopVerdict | None = None
@@ -70,7 +71,7 @@ class LoopState:
 
     @staticmethod
     def from_events(events: tuple[MasterEvent, ...]) -> LoopState:
-        prunes, rungs, finished = set(), set(), set()
+        prunes, rungs, pruned_rungs, finished = set(), set(), set(), set()
         relayed: dict[WorkerId, int] = {}
         stop: StopVerdict | None = None
         stop_at: float | None = None
@@ -79,6 +80,8 @@ class LoopState:
             if e.kind is MasterEventKind.PRUNE and isinstance(rid, str):
                 if e.data.get("action") in ("prune", "solved"):
                     prunes.add(RunId(rid))
+                    if e.data.get("action") == "prune" and "rung" in e.data:
+                        pruned_rungs.add(f"{rid}:{e.data['rung']}")
                 elif "rung" in e.data:
                     rungs.add(f"{rid}:{e.data['rung']}")
             elif e.kind is MasterEventKind.RUN_FINISHED and isinstance(rid, str):
@@ -94,6 +97,7 @@ class LoopState:
         return LoopState(
             seen_prunes=frozenset(prunes),
             seen_rungs=frozenset(rungs),
+            pruned_rungs=frozenset(pruned_rungs),
             seen_finished=frozenset(finished),
             relayed=relayed,
             stop=stop,

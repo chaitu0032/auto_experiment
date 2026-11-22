@@ -18,6 +18,8 @@ class Cohort:
     observations: tuple[Observation, ...]
     # "<run_id>:<rung>" pairs already kept at that rung; a rung decision is final.
     decided_rungs: frozenset[str] = frozenset()
+    # "<run_id>:<rung>" pairs where successive halving pruned the run.
+    pruned_rungs: frozenset[str] = frozenset()
 
 
 @runtime_checkable

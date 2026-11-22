@@ -280,9 +280,11 @@ def prune(
         d.config.goal.threshold,
         observations,
         decided_rungs=state.seen_rungs,
+        pruned_rungs=state.pruned_rungs,
     )
     result = d.pruning.run(cohort)
     seen_prunes, seen_rungs = set(state.seen_prunes), set(state.seen_rungs)
+    pruned_rungs = set(state.pruned_rungs)
     for verdict in result.verdicts:
         key = f"{verdict.run_id}:{verdict.evidence.get('rung')}"
         if (
@@ -296,6 +298,8 @@ def prune(
         if rid in seen_prunes:
             continue
         seen_prunes.add(rid)
+        if verdict.action is PruneAction.PRUNE and "rung" in verdict.evidence:
+            pruned_rungs.add(f"{rid}:{verdict.evidence['rung']}")
         _emit_verdict(d, verdict)
         record = next(r for r in members if r.spec.run_id == rid)
         category = "solved" if verdict.action is PruneAction.SOLVED else "pruned"
@@ -307,7 +311,12 @@ def prune(
             InboxKind.STOP,
             {"run_id": rid, "category": category, "reason": f"{verdict.pruner}: {verdict.reason}"},
         )
-    return replace(state, seen_prunes=frozenset(seen_prunes), seen_rungs=frozenset(seen_rungs))
+    return replace(
+        state,
+        seen_prunes=frozenset(seen_prunes),
+        seen_rungs=frozenset(seen_rungs),
+        pruned_rungs=frozenset(pruned_rungs),
+    )
 
 
 def _emit_verdict(d: MasterDeps, verdict: PruneVerdict) -> None:

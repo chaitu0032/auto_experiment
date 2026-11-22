@@ -151,6 +151,42 @@ def test_async_pool_keeps_pruned_runs_at_rungs_they_passed() -> None:
     assert rung0["r0004"].action is PruneAction.PRUNE
 
 
+def _late_rung1_cohort(pruned_rungs: frozenset[str]) -> Cohort:
+    a, b = record(1, RunStatus.COMPLETED), record(2, RunStatus.PRUNED)
+    c, d = record(3), record(4)
+    return Cohort(
+        1,
+        4000,
+        475.0,
+        (
+            observation(a, summary("r0001", [(1000, 100.0), (2000, 100.0)])),
+            observation(b, summary("r0002", [(1000, 50.0), (2000, 50.0)])),
+            observation(c, summary("r0003", [(1000, 70.0), (2000, 70.0)])),
+            observation(d, summary("r0004", [(1000, 60.0), (2000, 60.0)])),
+        ),
+        decided_rungs=frozenset({"r0001:0", "r0002:0", "r0003:0", "r0004:0", "r0001:1"}),
+        pruned_rungs=pruned_rungs,
+    )
+
+
+def test_async_pool_keeps_a_pruned_run_at_its_pruning_rung() -> None:
+    p = _halving(HalvingMode.ASYNC, min_peers=2)
+    rung1 = {
+        v.run_id: v
+        for v in p.evaluate(_late_rung1_cohort(frozenset({"r0002:1"})))
+        if v.evidence.get("rung") == 1
+    }
+    assert rung1["r0003"].action is PruneAction.KEEP and rung1["r0003"].evidence["of"] == 4
+    assert rung1["r0004"].action is PruneAction.PRUNE
+
+
+def test_sync_pool_ignores_pruning_rungs() -> None:
+    p = _halving(HalvingMode.SYNC)
+    with_rung = p.evaluate(_late_rung1_cohort(frozenset({"r0002:1"})))
+    assert with_rung == p.evaluate(_late_rung1_cohort(frozenset()))
+    assert {v.evidence["of"] for v in with_rung if v.evidence.get("rung") == 1} == {3}
+
+
 def test_hyperband_brackets() -> None:
     brackets = plan_hyperband(81, 3)
     assert brackets[0].n_configs == 81 and brackets[0].min_steps == 1

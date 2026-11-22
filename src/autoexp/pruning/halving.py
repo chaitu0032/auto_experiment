@@ -63,6 +63,7 @@ class SuccessiveHalvingPruner:
             goal_threshold=cohort.goal_threshold,
             observations=competing,
             decided_rungs=cohort.decided_rungs,
+            pruned_rungs=cohort.pruned_rungs,
         )
         verdicts: list[PruneVerdict] = []
         alive = {
@@ -76,12 +77,17 @@ class SuccessiveHalvingPruner:
             alive -= {v.run_id for v in rung_verdicts if v.action is PruneAction.PRUNE}
         return tuple(verdicts)
 
+    def _counts_pruned_at(self, cohort: Cohort, key: str) -> bool:
+        return key in cohort.decided_rungs or (
+            self._config.mode is HalvingMode.ASYNC and key in cohort.pruned_rungs
+        )
+
     def _rung(
         self, cohort: Cohort, rung_index: int, step: int, alive: set[str]
     ) -> list[PruneVerdict]:
         # Peers: runs still alive, plus finished runs that got past this rung on
-        # their own merit (a pruned run counts only at rungs it was kept at, so its
-        # overshoot past the rung that pruned it does not count).
+        # their own merit. A pruned run counts at rungs it was kept at and, in async
+        # mode, at the rung that pruned it; its overshoot past that rung never counts.
         peers = [
             o
             for o in cohort.observations
@@ -90,7 +96,7 @@ class SuccessiveHalvingPruner:
                 o.record.status.is_terminal
                 and (
                     o.record.status is not RunStatus.PRUNED
-                    or f"{o.record.spec.run_id}:{rung_index}" in cohort.decided_rungs
+                    or self._counts_pruned_at(cohort, f"{o.record.spec.run_id}:{rung_index}")
                 )
                 and _passed(o, step)
             )

@@ -18,11 +18,11 @@ import pytest
 from autoexp.config.loader import parse_config
 from autoexp.config.schema import ExperimentConfig
 from autoexp.core.ids import WorkerId
-from autoexp.core.models import MasterEventKind, RunPurpose, RunStatus
+from autoexp.core.models import MasterEvent, MasterEventKind, RunPurpose, RunStatus
 from autoexp.herdr.fake import FakeHerdr
 from autoexp.master.app import BuildOptions, build_master, write_experiment
 from autoexp.master.events import MasterEventLog
-from autoexp.master.loop import MasterAlreadyFinished
+from autoexp.master.loop import LoopState, MasterAlreadyFinished
 from autoexp.state.inbox import FileInbox
 from autoexp.state.jsonl import read_json
 from autoexp.state.layout import StateLayout
@@ -282,3 +282,20 @@ def test_runs_lost_to_a_stop_are_not_retried(tmp_path: Path) -> None:
     runs = load_registry(layout).all()
     assert any(r.status is RunStatus.LOST for r in runs)
     assert not [r for r in runs if r.spec.purpose is RunPurpose.RETRY]
+
+
+def test_loop_state_recovers_pruning_rungs_from_events() -> None:
+    def prune(rid: str, action: str, **extra: object) -> MasterEvent:
+        return MasterEvent(0.0, MasterEventKind.PRUNE, rid, {"run_id": rid, "action": action, **extra})
+
+    state = LoopState.from_events(
+        (
+            prune("r0001", "keep", rung=0),
+            prune("r0001", "prune", rung=1),
+            prune("r0002", "prune"),
+            prune("r0003", "solved", rung=0),
+        )
+    )
+    assert state.pruned_rungs == {"r0001:1"}
+    assert state.seen_rungs == {"r0001:0"}
+    assert state.seen_prunes == {"r0001", "r0002", "r0003"}
