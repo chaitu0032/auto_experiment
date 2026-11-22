@@ -1,0 +1,9 @@
+{
+  "name": "autoexp-dashboard",
+  "private": true,
+  "type": "module",
+  "description": "Dashboard frontend tests. The frontend itself has no build step and no dependencies.",
+  "scripts": {
+    "test": "node --test tests/web/*.test.mjs"
+  }
+}

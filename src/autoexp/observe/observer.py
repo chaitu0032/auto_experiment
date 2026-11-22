@@ -2,7 +2,8 @@
 
 Per tick it builds one `Observation` per live run: the folded RunRecord, an
 updated CurveSummary, a traceback found in stdout.log (if any), and an excerpt
-of the owning worker's pane. It reads; it never acts.
+of the owning worker's pane. It also caches each worker's pane tail in
+workers/<id>/pane.txt for the dashboard. It reads; it never acts.
 """
 
 from __future__ import annotations
