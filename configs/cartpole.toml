@@ -1,0 +1,120 @@
+# First milestone: the master runs 4 CartPole PPO configurations.
+# Every number here is a default chosen for an Apple M1 (8 cores, 16 GB, CPU only).
+
+experiment_id = "cartpole-v1"
+
+[trainer]
+name = "ppo_cartpole"
+command = ["python", "-m", "autoexp.trainers.ppo_cartpole"]
+total_steps = 300000
+
+[goal]
+metric = "rolling_return"      # mean episode return over the last `window` episodes
+window = 100
+threshold = 475.0
+seeds_required = 3             # a winner must hold on this many seeds
+
+[search_space]
+# name = { kind = "log_float" | "float" | "int" | "choice", low, high, values }
+learning_rate = { kind = "log_float", low = 1e-4, high = 3e-3 }
+num_envs      = { kind = "choice", values = [4, 8] }
+num_steps     = { kind = "choice", values = [128, 256] }
+ent_coef      = { kind = "float", low = 0.0, high = 0.02 }
+clip_coef     = { kind = "float", low = 0.1, high = 0.3 }
+update_epochs = { kind = "int", low = 2, high = 10 }
+
+[[initial_configs]]
+learning_rate = 2.5e-4
+num_envs = 4
+num_steps = 128
+ent_coef = 0.01
+clip_coef = 0.2
+update_epochs = 4
+
+[[initial_configs]]
+learning_rate = 1e-3
+num_envs = 4
+num_steps = 128
+ent_coef = 0.0
+clip_coef = 0.2
+update_epochs = 4
+
+[[initial_configs]]
+learning_rate = 2.5e-4
+num_envs = 8
+num_steps = 256
+ent_coef = 0.01
+clip_coef = 0.1
+update_epochs = 10
+
+[[initial_configs]]
+learning_rate = 3e-3
+num_envs = 4
+num_steps = 128
+ent_coef = 0.02
+clip_coef = 0.3
+update_epochs = 2
+
+[pruning]
+order = ["divergence", "plateau", "halving", "llm_judge"]
+
+[pruning.divergence]
+kl_max = 0.5
+kl_patience = 3
+value_loss_max = 1e4
+
+[pruning.plateau]
+min_steps = 60000
+patience_steps = 60000
+min_delta = 5.0
+
+[pruning.halving]
+mode = "sync"                  # "sync" successive halving or "async" ASHA
+rungs = [0.25, 0.5]            # fractions of trainer.total_steps
+eta = 2
+min_peers = 2
+
+[pruning.llm_judge]
+enabled = false
+every_ticks = 30
+
+[budget]
+wall_clock_s = 3600
+compute_s = 14400
+env_steps = 6000000
+llm_calls = 20
+llm_cost_usd = 2.0
+
+[stop]
+no_improvement_rounds = 3
+crash_limit = 3
+max_rounds = 6
+
+[workers]
+count = 2
+runs_per_worker = 2
+runtime = "claude"             # "claude" (coding agent) or "shell" (deterministic)
+agent_command = ["claude"]
+
+[devices]
+slots = ["cpu0", "cpu1", "cpu2", "cpu3"]
+threads_per_slot = 2
+max_concurrent_runs = 4
+
+[herdr]
+# Command prefix for every Herdr call. Point it at a named session or a wrapper.
+command = ["herdr"]
+session = "autoexp"
+workspace_label = "autoexp"
+
+[llm]
+engine = "llm"                 # "llm" or "deterministic"
+command = ["claude", "-p", "--output-format", "json"]
+timeout_s = 120
+
+[master]
+tick_s = 5.0
+
+[dashboard]
+host = "127.0.0.1"
+port = 8765
