@@ -29,8 +29,9 @@ src/autoexp/
   master/      control loop, scheduler, steering, event log
   worker/      pane runtimes, inbox handler, run supervisor, worker brief
   trainers/    trainer contract, CleanRL-style PPO for CartPole
-  dashboard/   localhost dashboard
-tests/
+  dashboard/   Python JSON API over the state directory (routes, handlers, schemas)
+    web/       JavaScript frontend: index.html, ES modules, SVG charts (no build step)
+tests/         Python tests; tests/web/ holds frontend tests run with node --test
 ```
 
 ## Development
@@ -39,6 +40,7 @@ Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 
 ```sh
 uv run --python 3.12 --with pytest --no-project python -m pytest -q
+npm test   # or: node --test tests/web/*.test.mjs  (Node 20+, no dependencies)
 ```
 
 Training needs the `train` extra (`torch`, `gymnasium`, `numpy`).

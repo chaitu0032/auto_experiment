@@ -117,6 +117,10 @@ class StateLayout:
     def worker_takeover(self, worker_id: WorkerId) -> Path:
         return self.worker_dir(worker_id) / "takeover"
 
+    def worker_pane_tail(self, worker_id: WorkerId) -> Path:
+        """Pane output cached by the master's observer each tick (dashboard reads it)."""
+        return self.worker_dir(worker_id) / "pane.txt"
+
     # approvals
     @property
     def approvals_dir(self) -> Path:

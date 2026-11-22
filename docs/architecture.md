@@ -42,7 +42,7 @@ validated by deterministic code before it has any effect.
 | Telemetry parsing and curve summaries | `telemetry/` | no |
 | Plateau / divergence / successive-halving / ASHA pruning | `pruning/rules.py`, `pruning/halving.py` | no |
 | Budgets and stop rules | `budget/` | no |
-| Dashboard | `dashboard/` | no |
+| Dashboard (Python JSON API + JavaScript UI) | `dashboard/`, `dashboard/web/` | no |
 | **Seam 1: decision proposal** (what to run next, final narrative) | `decision/llm.py` behind `DecisionEngine` | yes, falls back to `decision/deterministic.py` |
 | **Seam 2: LLM-judgement pruner** (curves + log excerpts) | `pruning/llm_judge.py` behind `Pruner` | yes, optional, budget-gated |
 | **Seam 3: worker coding agent** (debug a crashed run) | `worker/runtime.py` `ClaudeCodeRuntime` | yes, `ShellRuntime` is the deterministic alternative |
@@ -83,7 +83,11 @@ flowchart LR
   W1 & W2 -->|status events| WEV
   O --> REG & WEV
   L --> MEV
-  DASH[Dashboard localhost] --> Disk
+  subgraph Dashboard [dashboard, 127.0.0.1]
+    UI[Browser UI: HTML + JS modules] -->|fetch JSON| API[Python JSON API]
+    API -->|SSE version events| UI
+  end
+  API -->|read state, write answers / takeover / STOP| Disk
 ```
 
 ### 3.1 Master (`master/`)
@@ -254,12 +258,82 @@ the tests.
 which writes `<approval_id>.decision.json`. Pending approvals never block the
 loop; only the gated action waits.
 
-### 3.13 Dashboard (`dashboard/`)
-Standard-library HTTP server bound to `127.0.0.1`. It reads the state directory
-(read-only except for approval answers, takeover toggles and the stop flag,
-which require a same-origin JSON POST). Views: runs by run ID with status and
-device, return curves, prune and decision events with their reasoning, budgets,
-pending approvals, worker panes, and the final finding.
+### 3.13 Dashboard (`dashboard/`): JavaScript frontend, Python JSON API
+
+The dashboard is split into a browser frontend and a Python backend. They
+share only the JSON contract in `dashboard/schemas.py`.
+
+**Backend** (Python, standard library `ThreadingHTTPServer`, bound to
+`127.0.0.1`):
+
+- `server.py` serves the frontend's static files from `dashboard/web/`
+  (`/` and `/static/...`, refusing any path outside that directory) and sends
+  `/api/...` requests through `routes.py` to `handlers.py`.
+- `handlers.py` reads the state directory through `views.py`, which are pure
+  builders from files to DTOs. The backend never talks to Herdr or to workers.
+  The master's observer caches each pane's tail in `workers/<id>/pane.txt`,
+  and the dashboard reads that file.
+- Only three writes are allowed: an approval decision file, a worker takeover
+  marker, and the `STOP` flag. The master picks each one up on its next tick.
+  Every POST needs `Content-Type: application/json` and an `Origin` that
+  matches the server's own origin; bodies are capped at 4 KiB and validated.
+
+Every response uses one envelope:
+`{"ok": bool, "data": <shape> | null, "error": {"code", "message"} | null}`.
+
+| Method | Path | Response `data` | Notes |
+|---|---|---|---|
+| GET | `/api/overview` | `OverviewDTO`: `experiment_id`, `goal` (metric, window, threshold, seeds_required), `version`, `round_index`, `master` (running/stopped/absent), `stop_requested`, `runs[]` (RunRowDTO), `workers[]`, `budget`, `approvals[]`, `finding` | what the page shows at a glance |
+| GET | `/api/runs/{run_id}` | `RunDetailDTO`: `run`, `events[]` (lifecycle), `stdout_tail` | per-run drill-down |
+| GET | `/api/runs/{run_id}/curve?since_step=N&max_points=M` | `CurveDTO`: `run_id`, `returns[{step, rolling_return, episode_return}]`, `losses[{step, policy_loss, value_loss, entropy, approx_kl}]`, `next_step` | incremental; `next_step` is the next `since_step` |
+| GET | `/api/events?after=SEQ&kinds=prune,decision` | `EventsDTO`: `events[{seq, at, kind, summary, data}]`, `next_seq` | prune `data`: `run_id, pruner, reason, evidence`; decision `data`: `engine, action, rationale, fallback_reason, proposals` |
+| GET | `/api/workers/{worker_id}/pane?lines=N` | `PaneDTO`: `worker_id`, `pane_id`, `text`, `read_at` | cached pane tail |
+| GET | `/api/stream` | server-sent events | `event: version` with `{"version": N}`, keepalive comment every 15 s |
+| POST | `/api/approvals/{approval_id}` | `ApprovalDTO` | body `{"decision": "approve"\|"reject", "note"}`; 409 if no longer pending |
+| POST | `/api/workers/{worker_id}/takeover` | `WorkerDTO` | body `{"on": bool}` |
+| POST | `/api/stop` | `OverviewDTO` | sets the user stop flag |
+
+`RunRowDTO` holds `run_id, round_index, purpose, parent_run_id, status,
+worker_id, device_id, seed, config, step, total_steps, rolling_return,
+best_rolling_return, sps, stop_reason, started_at, ended_at`.
+
+**Refresh.** `overview.version` is derived from the sizes and modification
+times of the state files the overview depends on. `/api/stream` pushes a
+`version` event whenever that value changes. The UI then refetches the
+overview, any events after its `next_seq` cursor, incremental curves for the
+runs on screen, and the pane tails. If the stream fails, the UI polls the
+overview every 3 s and tries the stream again after 15 s.
+
+**Frontend** (`dashboard/web/`, plain modern JavaScript ES modules, no build
+step, no third-party code):
+
+```text
+web/index.html               layout, CSP (self only), loads js/main.js as a module
+web/css/style.css
+web/js/main.js               wires store + API + refresh + components
+web/js/api.js                fetch client, envelope unwrapping, ApiError, JSDoc mirror of schemas.py
+web/js/store.js              immutable store (frozen state, pure reducers, subscribe)
+web/js/refresh.js            SSE with polling fallback
+web/js/dom.js                h()/s() element builders; data is inserted as text, never as HTML
+web/js/format.js             display formatting
+web/js/charts/lineChart.js   dependency-free SVG line chart (multi-series, goal line)
+web/js/components/runsTable.js   runs by run ID; click a row to select it for the curves
+web/js/components/curves.js      rolling return (with the goal line), value loss, approx KL
+web/js/components/feed.js        prune and decision feed with reasoning and fallback reason
+web/js/components/budgets.js     budget lines with progress bars
+web/js/components/approvals.js   pending approvals with approve / reject
+web/js/components/workers.js     worker state, runs, pane tail, takeover toggle
+web/js/components/controls.js    master state, stop button
+web/js/components/finding.js     final finding when the loop has ended
+```
+
+Why there is no build step and no charting library: the UI is a handful of
+panels and line charts. A small SVG chart module avoids vendoring third-party
+code into a public repository and keeps the frontend runnable straight from
+the Python package. If the charts outgrow it, `charts/lineChart.js` is the only
+module that would change. The pure frontend modules (`store.js`, and later the
+formatting and chart scaling) are unit-tested with `node --test`, which needs
+no dependencies.
 
 ### 3.14 Keeping the user updated
 Three channels from the same events: the dashboard, a one-line digest per
@@ -293,6 +367,7 @@ workers/<worker_id>/inbox/<seq>-<msg_id>.json
 workers/<worker_id>/inbox/handled/
 workers/<worker_id>/events.jsonl
 workers/<worker_id>/takeover    human takeover marker
+workers/<worker_id>/pane.txt    pane tail cached by the observer (dashboard reads it)
 approvals/<approval_id>.json
 approvals/<approval_id>.decision.json
 ```
@@ -341,7 +416,8 @@ autoexp run-exec RUN_ID             run supervisor (spawned by the worker)
 Deterministic parts are tested without Herdr or an LLM: run ID allocation,
 locks (two processes), registry folding, recovery against seeded state dirs,
 each pruning rule on synthetic curves, stop rules on synthetic ledgers,
-telemetry parsing with partial lines, decision validation. Herdr goes through
+telemetry parsing with partial lines, decision validation, dashboard routes and
+static-path confinement. Frontend reducers run under `node --test`. Herdr goes through
 `FakeHerdr`, the LLM through a fake `LLMClient`. An end-to-end proof runs the
 milestone in a real Herdr session with real CartPole training.
 
