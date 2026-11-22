@@ -106,6 +106,15 @@ def test_failed_seed_check_refutes_the_candidate() -> None:
     assert DeterministicDecisionEngine().decide(ctx).action is DecisionAction.LAUNCH
 
 
+def test_crash_then_solved_retry_does_not_refute_the_config() -> None:
+    crashed, s1 = _run(1, RunStatus.CRASHED, 20.0, config=BASE)
+    retry, s2 = _run(2, RunStatus.SOLVED, 480.0, config=BASE, purpose=RunPurpose.RETRY)
+    ctx = _ctx([crashed, retry], {"r0001": s1, "r0002": s2})
+    (standing,) = standings(ctx)
+    assert standing.solved_seeds == {1} and not standing.refuted
+    assert DeterministicDecisionEngine().decide(ctx).action is DecisionAction.VERIFY_SEEDS
+
+
 def test_live_seed_checks_are_not_duplicated() -> None:
     solved, s1 = _run(1, RunStatus.SOLVED, 480.0, config=BASE)
     live, s2 = _run(2, RunStatus.RUNNING, 300.0, config=BASE, seed=2, purpose=RunPurpose.SEED_CHECK)

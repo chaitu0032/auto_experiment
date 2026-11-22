@@ -4,6 +4,8 @@
   css/). `resolve_static()` refuses anything outside that directory.
 - `/api/...` is dispatched through `routes.match()` to `handlers.py` and
   wrapped in the envelope from `schemas.py`.
+- Every request must carry a loopback `Host` header naming the server's own
+  port (403 `forbidden_host` otherwise), which blocks DNS rebinding.
 - POSTs must carry `Content-Type: application/json` and an `Origin` equal to
   the server's own origin (403 `forbidden_origin` otherwise); bodies are capped
   at 4 KiB and validated before a handler runs.
@@ -60,9 +62,12 @@ def resolve_static(url_path: str, web_root: Path = WEB_ROOT) -> Path | None:
     return candidate
 
 
+def allowed_hosts(host: str, port: int) -> frozenset[str]:
+    return frozenset(f"{h}:{port}" for h in {host, "127.0.0.1", "localhost"})
+
+
 def allowed_origins(host: str, port: int) -> frozenset[str]:
-    hosts = {host, "127.0.0.1", "localhost"}
-    return frozenset(f"http://{h}:{port}" for h in hosts)
+    return frozenset(f"http://{h}" for h in allowed_hosts(host, port))
 
 
 class DashboardServer(ThreadingHTTPServer):
@@ -73,6 +78,7 @@ class DashboardServer(ThreadingHTTPServer):
         self.stopping = threading.Event()
         super().__init__((config.host, config.port), _Handler)
         self.port = int(self.server_address[1])  # resolved when config.port is 0
+        self.hosts = allowed_hosts(config.host, self.port)
         self.origins = allowed_origins(config.host, self.port)
 
 
@@ -104,7 +110,15 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------ methods
 
+    def _host_allowed(self) -> bool:
+        if self.headers.get("Host") in self.server.hosts:
+            return True
+        self._json(403, error=("forbidden_host", "unexpected Host header"))
+        return False
+
     def do_GET(self) -> None:  # noqa: N802 - stdlib name
+        if not self._host_allowed():
+            return
         url = urlsplit(self.path)
         if not url.path.startswith("/api/"):
             path = resolve_static(url.path)
@@ -123,6 +137,8 @@ class _Handler(BaseHTTPRequestHandler):
         self._dispatch(found, dict(parse_qsl(url.query)), None)
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib name
+        if not self._host_allowed():
+            return
         url = urlsplit(self.path)
         found = match("POST", url.path)
         if found is None:

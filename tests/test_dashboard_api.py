@@ -143,6 +143,26 @@ def test_posts_require_same_origin_and_json(base_url: str, state: StateLayout) -
     assert _post(f"{base_url}/api/approvals/none", {"decision": "approve"}, base_url)[0] == 404
 
 
+def test_requests_with_a_foreign_host_are_refused(base_url: str) -> None:
+    port = base_url.rsplit(":", 1)[1]
+    for method, path in (("GET", "/api/overview"), ("GET", "/"), ("POST", "/api/stop")):
+        req = urllib.request.Request(
+            f"{base_url}{path}",
+            data=b"{}" if method == "POST" else None,
+            headers={
+                "Host": f"rebind.example:{port}",
+                "Origin": base_url,
+                "Content-Type": "application/json",
+            },
+            method=method,
+        )
+        with pytest.raises(urllib.error.HTTPError) as err:
+            urllib.request.urlopen(req, timeout=5)
+        assert err.value.code == 403
+        assert json.loads(err.value.read())["error"]["code"] == "forbidden_host"
+    assert _get(f"{base_url.replace('127.0.0.1', 'localhost')}/api/overview")[0] == 200
+
+
 def test_takeover_and_stop(base_url: str, state: StateLayout) -> None:
     status, body = _post(f"{base_url}/api/workers/w2/takeover", {"on": True}, base_url)
     assert status == 200 and body["data"]["takeover"] is True

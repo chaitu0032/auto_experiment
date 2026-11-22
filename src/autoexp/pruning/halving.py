@@ -80,14 +80,18 @@ class SuccessiveHalvingPruner:
         self, cohort: Cohort, rung_index: int, step: int, alive: set[str]
     ) -> list[PruneVerdict]:
         # Peers: runs still alive, plus finished runs that got past this rung on
-        # their own merit (a pruned run's overshoot past a later rung does not count).
+        # their own merit (a pruned run counts only at rungs it was kept at, so its
+        # overshoot past the rung that pruned it does not count).
         peers = [
             o
             for o in cohort.observations
             if o.record.spec.run_id in alive
             or (
                 o.record.status.is_terminal
-                and o.record.status is not RunStatus.PRUNED
+                and (
+                    o.record.status is not RunStatus.PRUNED
+                    or f"{o.record.spec.run_id}:{rung_index}" in cohort.decided_rungs
+                )
                 and _passed(o, step)
             )
         ]

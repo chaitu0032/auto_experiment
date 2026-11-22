@@ -73,7 +73,7 @@ class ConfigStanding:
     config: Mapping[str, ParamValue]
     run_ids: tuple[RunId, ...]
     solved_seeds: frozenset[int]
-    failed_seeds: frozenset[int]  # terminal runs that did not reach the goal
+    failed_seeds: frozenset[int]  # finished runs that did not reach the goal
     live: int
     best: float
     first_solver: RunId | None
@@ -100,7 +100,7 @@ def standings(context: DecisionContext) -> tuple[ConfigStanding, ...]:
             r
             for r in records
             if r.status.is_terminal
-            and r.status is not RunStatus.LOST
+            and r.status not in (RunStatus.LOST, RunStatus.CRASHED)
             and not is_solved(r, context.summaries, context.goal)
         ]
         result.append(

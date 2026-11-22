@@ -130,6 +130,27 @@ def test_halving_exempts_seed_checks_and_ignores_pruned_overshoot() -> None:
     assert all(v.evidence["of"] == 2 for v in rung1)
 
 
+def test_async_pool_keeps_pruned_runs_at_rungs_they_passed() -> None:
+    p = _halving(HalvingMode.ASYNC, min_peers=2)
+    a, b = record(1, RunStatus.COMPLETED), record(2, RunStatus.PRUNED)
+    c, d = record(3), record(4)
+    cohort = Cohort(
+        1,
+        4000,
+        475.0,
+        (
+            observation(a, summary("r0001", [(1000, 100.0), (2000, 100.0)])),
+            observation(b, summary("r0002", [(1000, 50.0), (2000, 50.0)])),
+            observation(c, summary("r0003", [(1000, 70.0)])),
+            observation(d, summary("r0004", [(1000, 60.0)])),
+        ),
+        decided_rungs=frozenset({"r0002:0"}),
+    )
+    rung0 = {v.run_id: v for v in p.evaluate(cohort) if v.evidence.get("rung") == 0}
+    assert rung0["r0003"].action is PruneAction.KEEP and rung0["r0003"].evidence["of"] == 4
+    assert rung0["r0004"].action is PruneAction.PRUNE
+
+
 def test_hyperband_brackets() -> None:
     brackets = plan_hyperband(81, 3)
     assert brackets[0].n_configs == 81 and brackets[0].min_steps == 1
