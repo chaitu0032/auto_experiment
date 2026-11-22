@@ -16,6 +16,11 @@ autoexp-state/
 .claude/
 .DS_Store
 
-# Coverage output
+# Coverage and other local tool output
 .coverage
+.coverage.*
 htmlcov/
+.mypy_cache/
+node_modules/
+.idea/
+.vscode/
