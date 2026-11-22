@@ -299,3 +299,49 @@ def test_loop_state_recovers_pruning_rungs_from_events() -> None:
     assert state.pruned_rungs == {"r0001:1"}
     assert state.seen_rungs == {"r0001:0"}
     assert state.seen_prunes == {"r0001", "r0002", "r0003"}
+
+
+def test_a_retry_from_an_earlier_round_is_still_pruned_and_goal_checked(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from autoexp.core.models import CurveSummary, EventSource, ProposedRun, RunEvent, RunEventKind
+    from autoexp.master import phases
+    from autoexp.observe.observer import TelemetryCache
+
+    master, layout = _master(loop_config(), tmp_path / "exp")
+    deps = master._d  # noqa: SLF001 - exercising one phase directly
+
+    def start(round_index: int, purpose: RunPurpose) -> str:
+        spec = deps.registry.allocate(ProposedRun(config={}, seed=1, purpose=purpose), round_index)
+        for kind in (RunEventKind.ASSIGNED, RunEventKind.STARTED):
+            deps.registry.append(
+                RunEvent(
+                    run_id=spec.run_id,
+                    at=time.time(),
+                    kind=kind,
+                    source=EventSource.MASTER,
+                    data={"worker_id": "w1", "device_id": "cpu0"},
+                )
+            )
+        return spec.run_id
+
+    retry = start(1, RunPurpose.RETRY)
+    start(2, RunPurpose.EXPLORE)
+    goal = deps.config.goal.threshold
+    summary = CurveSummary(
+        run_id=retry, step=100, episodes=50, rolling_return=goal + 10,
+        best_rolling_return=goal + 10, best_at_step=100, last_eval_return=None,
+        approx_kl=None, entropy=None, value_loss=None, grad_norm=None,
+        learning_rate=None, sps=None, rss_mb=None, nan_seen=False,
+        kl_over_limit_streak=0, malformed_lines=0,
+    )
+    state = replace(LoopState(), cache=replace(TelemetryCache(), summaries={retry: summary}))
+
+    new_state = phases.prune(deps, deps.registry.all(), (), state)
+
+    assert retry in new_state.seen_prunes
+    verdicts = [
+        e for e in deps.events.all()
+        if e.kind is MasterEventKind.PRUNE and e.data.get("run_id") == retry
+    ]
+    assert [e.data["action"] for e in verdicts] == ["solved"]

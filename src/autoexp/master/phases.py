@@ -261,10 +261,22 @@ def prune(
     workers: tuple[WorkerRecord, ...],
     state: LoopState,
 ) -> LoopState:
-    round_index = policy.current_round(records)
-    members = tuple(r for r in records if r.spec.round_index == round_index)
-    if not any(r.status is RunStatus.RUNNING for r in members):
-        return state
+    # Every round with a running run, not just the latest: a retry keeps its
+    # parent's round and must still be judged against that round's peers.
+    live_rounds = sorted({r.spec.round_index for r in records if r.status is RunStatus.RUNNING})
+    for round_index in live_rounds:
+        members = tuple(r for r in records if r.spec.round_index == round_index)
+        state = _prune_round(d, members, workers, state, round_index)
+    return state
+
+
+def _prune_round(
+    d: MasterDeps,
+    members: tuple[RunRecord, ...],
+    workers: tuple[WorkerRecord, ...],
+    state: LoopState,
+    round_index: int,
+) -> LoopState:
     observations = tuple(
         Observation(
             record=r,
