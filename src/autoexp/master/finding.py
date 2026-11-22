@@ -7,8 +7,8 @@ from collections import Counter
 from collections.abc import Mapping
 
 from autoexp.core.ids import RunId
-from autoexp.core.models import CurveSummary, Finding, PruneVerdict, RunRecord, RunStatus
-from autoexp.decision.base import DecisionContext, winner
+from autoexp.core.models import CurveSummary, Finding, PruneVerdict, RunRecord
+from autoexp.decision.base import DecisionContext, is_solved, winner
 from autoexp.state.codec import encode
 from autoexp.state.jsonl import write_json_atomic
 from autoexp.state.layout import StateLayout
@@ -41,9 +41,9 @@ def build_finding(
     by_pruner = Counter(p.pruner for p in prunes if p.action.value == "prune")
     if by_pruner:
         lines.append(
-            "Pruned by: "
+            "Prune verdicts: "
             + ", ".join(f"{name} ({n})" for name, n in sorted(by_pruner.items()))
-            + "."
+            + " (a run that finished its budget before the stop landed counts as completed)."
         )
     lines += [
         "",
@@ -66,12 +66,12 @@ def build_finding(
             f"{sorted(found.solved_seeds)} (runs {', '.join(found.run_ids)})."
         )
     else:
-        solved = [r for r in runs if r.status is RunStatus.SOLVED]
+        solved = [r for r in runs if is_solved(r, summaries, context.goal)]
         if solved:
             lines.append(
                 "No configuration held the goal on the required "
-                f"{context.goal.seeds_required} seeds; solved once: "
-                + ", ".join(r.spec.run_id for r in solved)
+                f"{context.goal.seeds_required} seeds. Runs that reached it: "
+                + ", ".join(f"{r.spec.run_id} (seed {r.spec.seed})" for r in solved)
                 + "."
             )
         else:

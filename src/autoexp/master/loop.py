@@ -246,6 +246,10 @@ class MasterLoop:
             if finished:
                 context = self.context(d.registry.all(), cache.summaries, budget, free_slots=0)
                 phases.finalize(d, context, state.stop, history)
+                budget = phases.budget_snapshot(
+                    d, d.registry.all(), cache.summaries, d.events.all()
+                )
+                write_json_atomic(d.layout.master_budget, encode(budget))
                 self._heartbeat(now, state, "finished")
                 return TickResult(state=state, budget=budget, finished=True)
             if state.forced_at is None and state.stop_started_at is not None:
@@ -254,6 +258,7 @@ class MasterLoop:
                     state = replace(state, forced_at=now)
 
         # steer
+        phases.deliver_approval_results(d, list_workers(d.layout))
         state = phases.nudge(d, list_workers(d.layout), state, now)
         self._heartbeat(now, state, "running" if state.stop is None else "stopping")
         return TickResult(state=state, budget=budget, finished=False)

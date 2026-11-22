@@ -182,3 +182,21 @@ def test_llm_judge_seam() -> None:
     assert parse_verdicts({"verdicts": "nope"}, {"r0001"}) == ()
     bad = LLMJudgePruner(LLMJudgeConfig(enabled=True, every_ticks=1), _FakeLLM("no json"))
     assert bad.evaluate(cohort) == ()
+
+
+def test_rung_decisions_are_final() -> None:
+    """A run kept at a rung is not re-judged there when the peer pool changes later."""
+    p = _halving(HalvingMode.SYNC)
+    a, solved = record(1), record(2, RunStatus.SOLVED)
+    cohort = Cohort(
+        1,
+        4000,
+        475.0,
+        (
+            observation(a, _linear("r0001", 1, 1500)),  # type: ignore[arg-type]
+            observation(solved, _linear("r0002", 9, 1500)),  # type: ignore[arg-type]
+        ),
+    )
+    assert {v.run_id: v.action for v in p.evaluate(cohort)} == {"r0001": PruneAction.PRUNE}
+    sticky = Cohort(1, 4000, 475.0, cohort.observations, decided_rungs=frozenset({"r0001:0"}))
+    assert p.evaluate(sticky) == ()

@@ -1,8 +1,8 @@
-# auto_experiment architecture (v1, for review)
+# auto_experiment architecture (v1)
 
-Status: **design for review**. The package under `src/autoexp/` is a code
-skeleton of this design: data models and interfaces are real, behaviour is
-stubbed (`NotImplementedError`) unless noted. Nothing here trains yet.
+Status: **implemented**. The design was reviewed and approved as a skeleton
+(revision 2); `src/autoexp/` now implements it. Where the build added detail,
+this document says so.
 
 ## 1. What it is
 
@@ -35,7 +35,8 @@ validated by deterministic code before it has any effect.
 
 | Concern | Implementation | LLM? |
 |---|---|---|
-| Master control loop, scheduling, steering | `master/` | no |
+| Master control loop, scheduling, steering | `master/loop.py`, `master/phases.py`, `master/policy.py`, `master/scheduler.py`, `master/steering.py` | no |
+| Verification protocol (re-run a solver on fresh seeds, stop on a verified winner) | `decision/deterministic.py` `protocol_decision` | no, shared by every engine |
 | Locks (master, run, device) | `state/locks.py` | no |
 | Run registry, event folding, recovery | `state/registry.py`, `state/recovery.py` | no |
 | Worker inbox, approvals | `state/inbox.py`, `state/approvals.py` | no |
@@ -43,12 +44,17 @@ validated by deterministic code before it has any effect.
 | Plateau / divergence / successive-halving / ASHA pruning | `pruning/rules.py`, `pruning/halving.py` | no |
 | Budgets and stop rules | `budget/` | no |
 | Dashboard (Python JSON API + JavaScript UI) | `dashboard/`, `dashboard/web/` | no |
-| **Seam 1: decision proposal** (what to run next, final narrative) | `decision/llm.py` behind `DecisionEngine` | yes, falls back to `decision/deterministic.py` |
+| **Seam 1: decision proposal** (which configs to explore next, final narrative) | `decision/llm.py` behind `DecisionEngine` | yes, falls back to `decision/deterministic.py` |
 | **Seam 2: LLM-judgement pruner** (curves + log excerpts) | `pruning/llm_judge.py` behind `Pruner` | yes, optional, budget-gated |
 | **Seam 3: worker coding agent** (debug a crashed run) | `worker/runtime.py` `ClaudeCodeRuntime` | yes, `ShellRuntime` is the deterministic alternative |
 
-All LLM calls go through one `LLMClient` protocol (`llm/client.py`), so the
-budget ledger meters every call and tests substitute a fake.
+All LLM calls go through one `LLMClient` protocol (`llm/client.py`). The master
+wraps it in `MeteredLLMClient`, which refuses calls once the LLM budget is spent
+and writes an `llm_call` master event (purpose, cost, tokens) per call; the
+budget ledger counts those events. Tests substitute a fake client. The headless
+client (`claude -p --output-format json`) runs with the environment variables
+that tie a process to an enclosing Claude Code session removed, so its calls
+are independent sessions.
 
 ## 3. Components
 
@@ -91,32 +97,47 @@ flowchart LR
 ```
 
 ### 3.1 Master (`master/`)
-`MasterLoop` (`master/loop.py`) runs a fixed tick, each tick a pure sequence of
-phases over on-disk state:
+`MasterLoop` (`master/loop.py`) runs a fixed tick, each tick a sequence of
+phases over on-disk state. The phases live in `master/phases.py`; pure helpers
+that read the experiment (current round, improvement streak, compute usage,
+crash verdicts) live in `master/policy.py`; `master/app.py` is the composition
+root that builds the loop from a config.
 
 1. **Ingest** new run events, worker events, telemetry lines (incremental, by
    byte offset), approval decisions and the user stop flag.
 2. **Reconcile** the registry by folding events, then probe run locks to find
-   runs whose supervisor died (status becomes `lost`).
+   runs whose supervisor died (status becomes `lost`). An assigned run whose
+   assign message was handled but which never launched within 240 s is also
+   `lost`. A lost run, or a crashed run its worker judged `retry`, is re-run
+   once under a new run ID (purpose `retry`, same round, same config and seed).
+   A crashed run gets a `debug` message to its worker.
 3. **Observe** (`observe/`): per-run `CurveSummary` from telemetry, plus
    tracebacks from `stdout.log` and a tail of each worker pane.
 4. **Prune** (`pruning/`): run the pruning pipeline over each live cohort; each
    `PruneVerdict` is written as a master event, then sent to the owning worker
    as a `stop` inbox message.
 5. **Budget and stop** (`budget/`): update the `BudgetLedger`; evaluate
-   `StopRule`s; on the first that fires, stop launching, drain or stop runs and
-   write the finding.
-6. **Decide** (`decision/`): when capacity is free and the current round is
-   settled, ask the `DecisionEngine` for a `Decision` (launch configs, verify
-   seeds, wait, or stop). Proposals are validated against the search space;
-   anything that would change training code or exceed a budget becomes a
-   pending `ApprovalRequest` instead of an action, and the loop carries on.
+   `StopRule`s; on the first that fires, stop launching, send `stop` to every
+   live run's worker, wait for the runs to drain, and write the finding. If a
+   worker has not stopped its runs after 90 s, the master writes the runs'
+   `control.json` itself (the one documented exception to "the master only
+   talks to workers": an unresponsive worker must not train past a stop rule).
+6. **Decide** (`decision/`): rounds are synchronous. When the current round is
+   settled (every run ended) and capacity is free, ask the `DecisionEngine` for
+   a `Decision` (launch configs, verify seeds, wait, or stop). Round 1 is the
+   config's `initial_configs`. Proposals are validated against the search
+   space; anything that would change training code or exceed a budget becomes
+   a pending `ApprovalRequest` instead of an action, and the loop carries on.
+   The decision event carries the full proposal list, so a master that dies
+   mid-allocation finishes the allocation on restart.
 7. **Schedule** (`master/scheduler.py`): allocate run IDs, pick a worker and a
    free device for each accepted proposal.
 8. **Steer** (`master/steering.py`): write inbox messages and nudge worker
    panes; respect takeover and busy panes.
-9. **Report**: append a one-line digest to the master pane and to
-   `master/events.jsonl`, which is what the dashboard shows.
+9. **Report**: append a one-line digest to the master's terminal and to
+   `master/events.jsonl`, which is what the dashboard shows. The latest budget
+   snapshot and curve summaries are rewritten each tick to `master/budget.json`
+   and `master/summaries.json` for the dashboard.
 
 Write-ahead rule: every side effect is first recorded as an intent event with a
 deterministic ID (for example inbox message `r0003-assign`), then executed
@@ -132,8 +153,17 @@ A worker is a Herdr pane plus a runtime that drives it:
   back with `autoexp worker report`. It must not edit training code without an
   approved `code_change` approval.
 - `ShellRuntime`: runs `autoexp worker serve`, which loops the same mechanical
-  handler without an agent. Used for tests, for deterministic proof runs, and
-  when no agent is available.
+  handler without an agent. Used for tests, for deterministic runs, and when no
+  agent is available. It polls its inbox, so the master never types into it;
+  any line a human types into it puts the worker in takeover (commands:
+  `status`, `stop <run_id>`, `release`, `help`). It answers `debug` requests
+  with verdict `unfixable` (there is no agent to debug).
+
+The brief is written to `workers/<id>/BRIEF.md`; the pane id and runtime to
+`workers/<id>/worker.json`. After a `debug` message the agent reports a verdict
+with `autoexp worker report --run <id> --verdict retry|unfixable "<diagnosis>"`:
+`retry` makes the master re-run the config once, `unfixable` counts toward the
+crash-limit stop rule (as does a crash with no verdict after 300 s).
 
 `autoexp worker handle` (`worker/handler.py`) is the mechanical part both
 runtimes share: it reads the inbox in order, launches assigned runs, forwards
@@ -167,12 +197,17 @@ Telemetry is our own JSONL, one `TelemetryEvent` per line:
 | `eval` | `mean_return`, `std_return`, `episodes`, `video_path` (null in v1: video seam) |
 | `system` | `cpu_percent`, `rss_mb`, `device_util`, `threads` |
 
-`TelemetryReader` tails each file from a stored byte offset and tolerates a
-partial last line and malformed lines (counted, not fatal). `summarize()` folds
+`TelemetryReader` tails each file from a byte offset the master keeps in memory
+and tolerates a partial last line and malformed lines (counted, not fatal). A
+restarted master rescans from offset 0, which is always correct because the
+summary is a pure fold of the file. `summarize()` folds
 events into a `CurveSummary` (rolling mean return over the last 100 episodes,
 best so far, latest KL/entropy/value loss, NaN seen, throughput, memory). The
 `Observer` combines that with crash evidence from `stdout.log` (traceback
-detection) and the worker pane tail (`herdr pane read`).
+detection) and the worker pane tail (`herdr pane read`, cached every 5 s in
+`workers/<id>/pane.json` for the dashboard). Non-finite floats are written as
+the strings `"nan"`, `"inf"`, `"-inf"` (JSON has no NaN) and read back as
+floats, so divergence stays visible.
 
 ### 3.5 Pruning (`pruning/`)
 Each pruner implements `Pruner.evaluate(cohort) -> list[PruneVerdict]`, where a
@@ -187,7 +222,10 @@ order and records every verdict, including `keep`, with its reasoning.
   waits until every live run in the cohort passed the rung then keeps the top
   `1/eta`; `async` (ASHA) mode decides as each run reaches a rung against the
   values recorded there so far. `plan_hyperband()` produces Hyperband brackets
-  for the decision engine to fill.
+  for the decision engine to fill. The value of a run at a rung is the best
+  rolling return it reached by that rung's step. Seed-check runs are exempt
+  (they verify, they do not compete), and a pruned run's overshoot past a later
+  rung does not make it a peer there.
 - `LLMJudgePruner` (seam 2): sends compact curve summaries and log excerpts to
   the LLM every `every_ticks`; its verdicts pass through the same validation and
   are budget-gated.
@@ -196,23 +234,38 @@ order and records every verdict, including `keep`, with its reasoning.
 `DecisionEngine.decide(context) -> Decision`. The context holds the search space,
 every run's spec and summary, prune history, budgets and the goal.
 
-- `DeterministicDecisionEngine`: if a config solved the goal on fewer than the
-  required seeds, propose the missing seeds; if a config holds on all required
-  seeds, decide `stop` (goal reached); otherwise mutate the top-k configs inside
-  the search space and skip configs already tried.
-- `LLMDecisionEngine` (seam 1): builds a prompt, calls the `LLMClient` for
-  structured JSON, validates and clamps it with `decision/validate.py`, and on
-  any failure falls back to the deterministic engine. The decision records
-  which engine produced it and why a fallback happened.
+- **Verification protocol** (`protocol_decision`, deterministic, every engine
+  runs it first): if a config holds the goal on `seeds_required` seeds, decide
+  `stop` (goal reached); if a config solved on fewer seeds and no seed check of
+  it failed, propose the missing seeds (purpose `seed_check`, fresh seeds). A
+  failed seed check refutes the config and exploration resumes.
+- `DeterministicDecisionEngine`: otherwise mutate the top-k configs inside the
+  search space (scaled learning rate, neighbouring choices, nudged
+  coefficients) and skip configs already tried. Exploration always uses seed 1
+  so configs are compared like for like; other seeds only verify.
+- `LLMDecisionEngine` (seam 1): otherwise builds a prompt (search space, run
+  table with curve summaries, prune history, budgets, goal), calls the
+  `LLMClient` for JSON, validates and clamps it with `decision/validate.py`
+  (unknown keys or parameters rejected, numbers clamped into bounds,
+  duplicates and proposals beyond the free slots dropped, seeds assigned by the
+  master), and on any failure falls back to the deterministic engine. The
+  decision records which engine produced it and why a fallback happened. At the
+  end it may write the finding's narrative paragraph.
 
 ### 3.7 Budgets and stop rules (`budget/`)
-`BudgetLedger` meters wall clock, compute seconds (summed trainer process
-time), environment steps, LLM calls and LLM cost. Stop rules, first match wins:
-goal reached (winner holds on `seeds_required` seeds), wall-clock budget, compute
-budget, LLM budget, `no_improvement_rounds` rounds without improvement, crash
-limit (repeated unfixable crashes), `max_rounds`, user stop. Before a budget
-would be exceeded to finish valuable work (for example a seed check in flight),
-the master files a `budget_extension` approval instead of overrunning.
+`BudgetLedger` meters wall clock (since the experiment started, across
+restarts), compute seconds (summed wall time of running trainer processes),
+environment steps, LLM calls and LLM cost. Stop rules, in priority order, first
+match wins: user stop, goal reached (winner holds on `seeds_required` seeds),
+wall-clock budget, compute budget, env-step budget, LLM budget (when the LLM
+engine is used and `stop.stop_on_llm_budget` is true), crash limit (repeated
+unfixable crashes), `no_improvement_rounds` settled exploration rounds whose
+best run did not beat the best so far by `stop.min_improvement`, and
+`max_rounds`. The last two only fire once the current round has settled. When
+a time budget passes 85% while a seed check is in flight, the master files a
+`budget_extension` approval (50% more); an approved extension raises that limit.
+Without an answer the budget stops the loop as usual: it is never exceeded
+without approval.
 
 ### 3.8 Locks (`state/locks.py`)
 `fcntl.flock` locks under `locks/`, each with a JSON `LockInfo` sidecar (holder
@@ -231,8 +284,10 @@ once) is how recovery tells a live supervisor from a dead one. No PID guessing.
 Master to worker: one JSON `InboxMessage` file per message in
 `workers/<id>/inbox/<seq>-<msg_id>.json`, written atomically (temp file and
 rename), processed in sequence order, acknowledged by moving it to
-`inbox/handled/`. After writing, the master nudges the pane with a short line
-("autoexp: inbox has N messages") using `herdr pane send-text` and Enter.
+`inbox/handled/`. After writing, the master nudges an agent pane with a short
+line ("autoexp: N message(s) waiting for w1; run `autoexp worker handle ...`")
+using `herdr pane send-text` and Enter, re-nudging every 20 s while messages
+stay unhandled.
 
 Worker to master: `WorkerEvent` lines appended to `workers/<id>/events.jsonl`
 (`idle`, `working`, `blocked`, `takeover`, `done`, with run ID and note). Run
@@ -241,22 +296,30 @@ supervisors append `RunEvent` lines to `runs/<run_id>/events.jsonl`.
 ### 3.10 Human takeover
 Human input wins. The master types into a pane only when (a) the worker has no
 `takeover` marker (`autoexp worker takeover <id> on|off`, also a dashboard
-button) and (b) Herdr reports the pane's agent `idle`. A pane that is busy
-without a master nudge is treated as human-driven and steering holds. Held
-messages stay in the durable inbox and are delivered after release.
+button) and (b) Herdr reports the pane's agent `idle` (or `unknown`). A pane
+that is busy is treated as human-driven and steering holds, with a
+`steer_held` event at most once a minute. Held messages stay in the durable
+inbox and are delivered after release. The scheduler does not assign new runs
+to a worker in takeover. `autoexp pane read|send <worker>` lets an operator use
+the master's pane access by hand, under the same rule.
 
 ### 3.11 Herdr adapter (`herdr/`)
 `HerdrAdapter` protocol: create workspace, split pane, run a command in a pane,
 read pane output, send text and keys, get agent state. `CliHerdrAdapter` shells
 out with a configurable command prefix, so a deployment can point it at a named
-session (`herdr --session <name>`) or at a wrapper script. `FakeHerdr` backs
-the tests.
+session (`herdr.session` adds `--session <name>`) or at a wrapper script (the
+`AUTOEXP_HERDR_COMMAND` environment variable replaces the prefix and the
+session). It parses Herdr's JSON envelopes (`{"result": ...}` /
+`{"error": {"code", "message"}}`). `FakeHerdr` backs the tests; `NullHerdr`
+backs `autoexp up --no-herdr`, where workers are started by hand.
 
 ### 3.12 Approvals (`state/approvals.py`)
 `ApprovalRequest` files in `approvals/<approval_id>.json` (`code_change`,
 `budget_extension`), answered by `autoexp approve|reject <id>` or the dashboard,
 which writes `<approval_id>.decision.json`. Pending approvals never block the
-loop; only the gated action waits.
+loop; only the gated action waits. An approved `code_change` is delivered to
+worker `w1` as an `approval_result` message carrying the diff, for the coding
+agent to apply; the shell runtime declines it.
 
 ### 3.13 Dashboard (`dashboard/`): JavaScript frontend, Python JSON API
 
@@ -347,13 +410,14 @@ Everything is keyed by run ID (`r0001`, `r0002`, ...). Default root:
 `./autoexp-state/<experiment_id>/` (git-ignored).
 
 ```text
-experiment.json                 config snapshot + experiment id
-counters.json                   next run id, next inbox sequence
+experiment.json                 experiment id, start time, trainer, devices, goal, config text
+counters.json                   next run id
 STOP                            user stop flag (presence = stop)
-finding.md                      final written finding
-master/events.jsonl             decisions, prunes, budget, round, stop events
-master/heartbeat.json           last tick time, pid
-master/offsets.json             telemetry read offsets (cache, rebuildable)
+finding.md, finding.json        final written finding (text and structured)
+master/events.jsonl             decisions, prunes, rounds, steering, LLM calls, stop events
+master/heartbeat.json           last tick time, tick, status, pid
+master/budget.json              latest BudgetSnapshot (rewritten every tick)
+master/summaries.json           latest CurveSummary per run (cache, rebuildable)
 locks/master.lock (+ .json)
 locks/run-<run_id>.lock (+ .json)
 locks/device-<device_id>.lock (+ .json)
@@ -361,32 +425,39 @@ runs/<run_id>/spec.json         RunSpec (immutable once written)
 runs/<run_id>/events.jsonl      RunEvent lines (lifecycle)
 runs/<run_id>/metrics.jsonl     TelemetryEvent lines (trainer)
 runs/<run_id>/stdout.log        trainer stdout+stderr
+runs/<run_id>/supervisor.log    run supervisor output
 runs/<run_id>/control.json      stop request from the worker to the supervisor
 runs/<run_id>/checkpoints/
-workers/<worker_id>/worker.json pane id, runtime, assigned devices
+workers/<worker_id>/worker.json pane id, runtime
+workers/<worker_id>/BRIEF.md    the worker agent's brief
 workers/<worker_id>/inbox/<seq>-<msg_id>.json
 workers/<worker_id>/inbox/handled/
 workers/<worker_id>/events.jsonl
 workers/<worker_id>/takeover    human takeover marker
-workers/<worker_id>/pane.txt    pane tail cached by the observer (dashboard reads it)
+workers/<worker_id>/pane.json   pane tail cached by the observer (dashboard reads it)
 approvals/<approval_id>.json
 approvals/<approval_id>.decision.json
 ```
 
 ## 5. Recovery
 
-`recover(layout, locks) -> RecoveryReport` (`state/recovery.py`) runs at master
-start before the first tick:
+`recover(layout, registry, locks, inbox) -> RecoveryReport`
+(`state/recovery.py`) runs at master start before the first tick:
 
-1. Take `master.lock` or exit.
+1. Take `master.lock` or exit (a finished experiment refuses to restart).
 2. Fold every `runs/*/events.jsonl` into `RunRecord`s.
-3. For each non-terminal run, probe its run lock: held means the supervisor is
+3. For each running run, probe its run lock: held means the supervisor is
    alive and the run is re-adopted; free means it died and the run becomes
-   `lost` (the decision engine may retry it under a new run ID).
-4. Replay master intents whose effect is missing (an allocated run without its
-   assign message, a prune verdict without its stop message).
-5. Re-open missing worker panes for worker IDs that own live runs.
-6. Rebuild telemetry offsets (a cache; rescanning from zero is always correct).
+   `lost` (re-run once under a new run ID).
+4. Replay assign messages missing for assigned runs (message ids are
+   deterministic, so posting is idempotent).
+5. Write a `recovered` master event listing adopted, lost and replayed runs.
+
+Then the loop rebuilds the rest from disk: `LoopState.from_events` restores
+which prunes, finished runs and worker reports were already logged and any stop
+in progress; `WorkerPanes.ensure` keeps live panes and re-opens missing ones;
+the decide phase completes a decision whose allocation was cut short;
+telemetry is rescanned from offset 0.
 
 ## 6. Configuration and machine defaults
 
@@ -395,32 +466,47 @@ stop rules, workers, devices, Herdr and LLM settings (`config/schema.py`).
 Defaults for this Mac (Apple M1, 8 cores, 16 GB, CPU only): 2 workers x 2 runs,
 4 device slots `cpu0..cpu3` with 2 torch threads each, hard cap of 4 concurrent
 training processes. An `mps` slot can be enabled, but a small PPO MLP is faster
-on CPU.
+on CPU (one 300k-step CartPole run takes about a minute alone). Workers run
+Claude Code with `--model sonnet`; the decision engine calls
+`claude -p --output-format json --model sonnet`. Both commands are config.
 
 ## 7. Command surface (`cli.py`)
 
 ```text
 autoexp up --config FILE            master + dashboard (single start command)
-autoexp status                      text summary of runs, budgets, approvals
+    [--no-herdr] [--engine llm|deterministic] [--runtime claude|shell] [--port N]
+autoexp status                      text summary of runs, budgets, approvals, finding
 autoexp stop                        set the user stop flag
-autoexp approve|reject ID           answer a pending approval
-autoexp dashboard                   dashboard only, read state
+autoexp approve|reject ID [--note]  answer a pending approval
+autoexp dashboard [--port N]        dashboard only, over the state directory
+autoexp pane read|send WORKER ...   read or type into a worker pane as the master
 autoexp worker handle --worker ID   process the inbox once (used by both runtimes)
 autoexp worker serve --worker ID    ShellRuntime loop
-autoexp worker report --worker ID   append a WorkerEvent
+autoexp worker report --worker ID --state S [--run ID] [--verdict retry|unfixable] NOTE
 autoexp worker takeover ID on|off   human takeover marker
 autoexp run-exec RUN_ID             run supervisor (spawned by the worker)
+
+--state-dir (default ./autoexp-state) is either one experiment's root or a
+directory holding one experiment per subdirectory.
 ```
 
 ## 8. Testing strategy
 
-Deterministic parts are tested without Herdr or an LLM: run ID allocation,
-locks (two processes), registry folding, recovery against seeded state dirs,
-each pruning rule on synthetic curves, stop rules on synthetic ledgers,
-telemetry parsing with partial lines, decision validation, dashboard routes and
-static-path confinement. Frontend reducers run under `node --test`. Herdr goes through
-`FakeHerdr`, the LLM through a fake `LLMClient`. An end-to-end proof runs the
-milestone in a real Herdr session with real CartPole training.
+Deterministic parts are tested without Herdr or an LLM (`pytest`): run ID
+allocation, locks across processes (including release on holder death),
+registry folding, inbox and approvals, each pruning rule on synthetic curves,
+stop rules on synthetic ledgers, telemetry parsing with partial lines, decision
+protocol, exploration and validation (with a fake LLM for the LLM engine and
+its fallbacks), the run supervisor with a fast fake trainer (complete, crash,
+stop, busy device), the worker handler and takeover commands, the Herdr CLI
+adapter against a fake `herdr` script, and the dashboard API over a real
+finished experiment (envelope, errors, same-origin POSTs, static-path
+confinement, SSE). `tests/test_master_loop.py` runs the whole loop end to end
+with real supervisors: rounds, pruning, seed verification, goal stop, a master
+SIGKILL-equivalent restart that adopts live runs and retries a run whose
+supervisor died, and the user stop flag. A short real PPO run checks the
+trainer contract. Frontend pure modules run under `node --test`. An end-to-end
+proof runs the milestone in a real Herdr session with real CartPole training.
 
 ## 9. Out of scope for v1
 
