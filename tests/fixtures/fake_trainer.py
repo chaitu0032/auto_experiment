@@ -4,6 +4,8 @@ The return curve is a deterministic function of the config:
   return(step) = cap * (1 - exp(-step / scale)), cap = config["cap"] (default 200)
 `config["crash_at"]` raises at that step; `config["nan_at"]` writes a NaN loss.
 `config["delay"]` sleeps per episode so a test can observe a live run.
+`config["until_stopped"]` ignores the step budget and runs until SIGTERM (capped
+at UNTIL_STOPPED_MAX_S as a safety net), so a stop test cannot race natural exit.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import time
 from pathlib import Path
 
 stop = False
+UNTIL_STOPPED_MAX_S = 60.0
 
 
 def _term(signum, frame):  # noqa: ANN001
@@ -36,10 +39,14 @@ def main() -> int:
     cap = float(cfg.get("cap", 200))
     scale = float(cfg.get("scale", a.total_steps / 4))
     delay = float(cfg.get("delay", 0.0))
+    until_stopped = bool(cfg.get("until_stopped", False))
+    deadline = time.monotonic() + UNTIL_STOPPED_MAX_S
     path = Path(a.run_dir) / "metrics.jsonl"
     step = 0
     with path.open("a") as out:
-        while step < a.total_steps and not stop:
+        while not stop and (
+            step < a.total_steps if not until_stopped else time.monotonic() < deadline
+        ):
             step += 500
             if cfg.get("crash_at") and step >= cfg["crash_at"]:
                 raise RuntimeError("fake trainer crash for the test")

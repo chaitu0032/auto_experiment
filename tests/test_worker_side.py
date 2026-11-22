@@ -98,20 +98,37 @@ def test_supervisor_classifies_crash_with_traceback(layout: StateLayout) -> None
     assert "fake trainer crash" in outcome.reason
 
 
+def _wait_for_metrics(path: Path, timeout_s: float = 30.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if path.exists() and path.stat().st_size > 0:
+            return
+        time.sleep(0.02)
+    raise AssertionError(f"trainer never wrote {path}")
+
+
 def test_supervisor_stops_on_control_file(layout: StateLayout) -> None:
+    # The trainer ignores its step budget, so it cannot finish before the stop
+    # lands; the stop is written only once the trainer is observably running.
     _experiment(layout, fake_trainer_command())
-    rid = _assigned_run(layout, {"delay": 0.2})
+    rid = _assigned_run(layout, {"delay": 0.05, "until_stopped": True})
     layout.run_dir(rid).mkdir(parents=True, exist_ok=True)
 
     def request_stop() -> None:
-        time.sleep(1.0)
+        _wait_for_metrics(layout.run_metrics(rid))
         write_json_atomic(
             layout.run_control(rid), {"action": "stop", "category": "pruned", "reason": "test"}
         )
 
-    threading.Thread(target=request_stop).start()
+    stopper = threading.Thread(target=request_stop)
+    stopper.start()
     outcome = supervise(layout, FlockLockManager(), rid)
+    stopper.join()
     assert outcome.status is RunStatus.PRUNED and outcome.reason == "test"
+    events = _registry(layout).events(rid)
+    stops = [e for e in events if e.kind is RunEventKind.STOP_REQUESTED]
+    assert len(stops) == 1 and stops[0].data["category"] == "pruned"
+    assert events[-1].kind is RunEventKind.EXITED and events[-1].data["outcome"] == "pruned"
 
 
 def test_supervisor_refuses_busy_device_and_unassigned_runs(layout: StateLayout) -> None:
