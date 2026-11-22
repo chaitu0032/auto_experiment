@@ -91,6 +91,7 @@ def _apply(record: RunRecord, event: RunEvent) -> RunRecord:
         return replace(
             record,
             status=RunStatus.ASSIGNED if record.status is RunStatus.ALLOCATED else record.status,
+            assigned_at=record.assigned_at if record.assigned_at is not None else event.at,
             worker_id=WorkerId(str(worker)) if worker else record.worker_id,
             device_id=DeviceId(str(device)) if device else record.device_id,
         )

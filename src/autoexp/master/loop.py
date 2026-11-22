@@ -214,11 +214,10 @@ class MasterLoop:
         # ingest worker reports and finished runs
         state = phases.relay_worker_reports(d, workers, state)
         state = phases.note_finished_runs(d, records, workers, state)
-        phases.handle_crashes_and_losses(d, records, workers, cache.summaries, now)
-        records = d.registry.all()
-
-        # prune (not while stopping: the stop already ends every run)
+        # retry and prune (not while stopping: the stop already ends every run)
         if state.stop is None:
+            phases.handle_crashes_and_losses(d, records, workers, cache.summaries, now)
+            records = d.registry.all()
             state = phases.prune(d, records, workers, state)
 
         # budget
