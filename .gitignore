@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+
+# Runtime state, logs and checkpoints (never committed)
+autoexp-state/
+*.log
+
+# Local tool settings
+.claude/
+.DS_Store
+
+# Coverage and other local tool output
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+node_modules/
+.idea/
+.vscode/

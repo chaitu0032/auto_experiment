@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:">
+  <title>autoexp dashboard</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <script type="module" src="/static/js/main.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>autoexp</h1>
+    <span id="experiment" class="muted"></span>
+    <span id="connection" class="pill">connecting</span>
+    <div id="controls" class="controls"></div>
+  </header>
+
+  <main class="grid">
+    <section id="finding" class="panel span-all" hidden></section>
+    <section id="budgets" class="panel"></section>
+    <section id="approvals" class="panel"></section>
+    <section id="runs" class="panel span-all"></section>
+    <section id="curves" class="panel span-2"></section>
+    <section id="feed" class="panel"></section>
+    <section id="workers" class="panel span-all"></section>
+  </main>
+</body>
+</html>
