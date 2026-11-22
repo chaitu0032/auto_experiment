@@ -46,8 +46,18 @@ class StateLayout:
         return self.master_dir / "heartbeat.json"
 
     @property
-    def telemetry_offsets(self) -> Path:
-        return self.master_dir / "offsets.json"
+    def master_budget(self) -> Path:
+        """Latest BudgetSnapshot, rewritten every tick (dashboard reads it)."""
+        return self.master_dir / "budget.json"
+
+    @property
+    def master_summaries(self) -> Path:
+        """Latest CurveSummary per run (cache for the dashboard; rebuildable)."""
+        return self.master_dir / "summaries.json"
+
+    @property
+    def finding_json(self) -> Path:
+        return self.root / "finding.json"
 
     # locks
     @property
@@ -117,9 +127,12 @@ class StateLayout:
     def worker_takeover(self, worker_id: WorkerId) -> Path:
         return self.worker_dir(worker_id) / "takeover"
 
+    def worker_brief(self, worker_id: WorkerId) -> Path:
+        return self.worker_dir(worker_id) / "BRIEF.md"
+
     def worker_pane_tail(self, worker_id: WorkerId) -> Path:
         """Pane output cached by the master's observer each tick (dashboard reads it)."""
-        return self.worker_dir(worker_id) / "pane.txt"
+        return self.worker_dir(worker_id) / "pane.json"
 
     # approvals
     @property

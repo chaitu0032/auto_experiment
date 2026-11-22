@@ -77,6 +77,7 @@ function render(state) {
 store.subscribe(render);
 render(store.get());
 startRefresh({
+  pollOnly: new URLSearchParams(window.location.search).get("refresh") === "poll",
   onVersion: refreshAll,
   onMode: (mode) => store.update((s) => withConnection(s, mode)),
 });

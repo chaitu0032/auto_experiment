@@ -5,12 +5,16 @@ import { time } from "../format.js";
 
 const SHOWN = new Set(["prune", "decision", "approval_requested", "round_started", "stopped", "recovered", "steer_held"]);
 
-function detail(event) {
+/** Extra evidence beyond the one-line summary (which already has the reason). */
+export function detail(event) {
   const d = event.data ?? {};
-  if (event.kind === "prune") return `${d.pruner ?? "?"}: ${d.reason ?? ""}`;
+  if (event.kind === "prune") {
+    const e = d.evidence ?? {};
+    return Object.entries(e).map(([k, v]) => `${k}=${typeof v === "number" ? +v.toFixed(3) : v}`).join(" ");
+  }
   if (event.kind === "decision") {
-    const fallback = d.fallback_reason ? ` (fallback: ${d.fallback_reason})` : "";
-    return `${d.engine ?? "?"} → ${d.action ?? "?"}${fallback}. ${d.rationale ?? ""}`;
+    const proposals = (d.proposals ?? []).map((p) => `${p.purpose} seed ${p.seed}`);
+    return proposals.length ? `proposals: ${proposals.join(", ")}` : "";
   }
   return "";
 }

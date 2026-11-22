@@ -12,6 +12,6 @@ export function renderFinding(root, state) {
     h("h2", {}, `Finding — stopped by ${f.stop_rule}`),
     f.winner_config && h("p", {}, "Winner: ", h("code", {}, configText(f.winner_config)),
       ` (runs ${f.winner_run_ids.join(", ")}) · ${f.tried} runs tried`),
-    h("pre", { class: "pane", style: "max-height:none; white-space:pre-wrap" }, f.text),
+    h("pre", { class: "pane finding-text" }, f.text),
   );
 }

@@ -8,7 +8,7 @@ export function renderWorkers(root, state, { onTakeover }) {
   mount(
     root,
     h("h2", {}, "Workers"),
-    h("div", { class: "grid", style: "padding:0" },
+    h("div", { class: "subgrid" },
       workers.map((w) => {
         const pane = state.panes[w.worker_id];
         return h("div", { class: "panel" },

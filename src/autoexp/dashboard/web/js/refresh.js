@@ -1,7 +1,8 @@
 // Refresh strategy: server-sent events from /api/stream announce a new
 // overview `version`; on each change we refetch what is on screen. If the
 // stream fails, fall back to polling the overview every POLL_MS and retry the
-// stream later.
+// stream later. `?refresh=poll` in the page URL forces polling (useful behind
+// proxies that buffer event streams, and for headless screenshots).
 
 import { STREAM_URL } from "./api.js";
 
@@ -9,10 +10,11 @@ const POLL_MS = 3000;
 const STREAM_RETRY_MS = 15000;
 
 /**
- * @param {{onVersion: (version:number) => void, onMode: (mode:string) => void}} handlers
+ * @param {{onVersion: (version:number) => void, onMode: (mode:string) => void,
+ *   pollOnly?: boolean}} handlers
  * @returns {() => void} stop function
  */
-export function startRefresh({ onVersion, onMode }) {
+export function startRefresh({ onVersion, onMode, pollOnly = false }) {
   let source = null;
   let pollTimer = null;
   let retryTimer = null;
@@ -22,11 +24,11 @@ export function startRefresh({ onVersion, onMode }) {
     onMode("polling");
     clearInterval(pollTimer);
     pollTimer = setInterval(() => onVersion(-1), POLL_MS); // -1: unknown, always refetch
-    retryTimer = setTimeout(openStream, STREAM_RETRY_MS);
+    if (!pollOnly) retryTimer = setTimeout(openStream, STREAM_RETRY_MS);
   };
 
   function openStream() {
-    if (stopped || typeof EventSource === "undefined") return poll();
+    if (stopped || pollOnly || typeof EventSource === "undefined") return poll();
     source = new EventSource(STREAM_URL);
     source.addEventListener("open", () => {
       clearInterval(pollTimer);

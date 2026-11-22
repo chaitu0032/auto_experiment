@@ -164,7 +164,9 @@ class CurveSummary:
     nan_seen: bool
     kl_over_limit_streak: int
     malformed_lines: int
-    curve: tuple[tuple[int, float], ...] = ()  # (step, rolling_return) points
+    curve: tuple[tuple[int, float], ...] = ()  # (step, rolling_return) points, thinned
+    recent_returns: tuple[float, ...] = ()  # last `window` episode returns (fold state)
+    value_loss_peak: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,6 +328,7 @@ class WorkerEvent:
     state: WorkerState
     run_id: RunId | None = None
     note: str = ""
+    verdict: str | None = None  # after a DEBUG request: "retry" or "unfixable"
 
 
 @dataclass(frozen=True, slots=True)
@@ -376,6 +379,10 @@ class MasterEventKind(StrEnum):
     APPROVAL_REQUESTED = "approval_requested"
     BUDGET = "budget"
     STEER_HELD = "steer_held"  # takeover or busy pane
+    STEERED = "steered"  # a message was delivered to a worker
+    WORKER_REPORT = "worker_report"  # a worker's status line, relayed
+    LLM_CALL = "llm_call"  # one metered LLM call (purpose, cost, tokens, ok)
+    RUN_FINISHED = "run_finished"
     STOPPED = "stopped"
     FINDING = "finding"
 
