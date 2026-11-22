@@ -29,7 +29,7 @@ pre.pane { background: #0b0d11; padding: 8px; max-height: 220px; overflow: auto;
 button { background: #222837; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 button.danger { border-color: var(--bad); color: var(--bad); }
 svg.chart { width: 100%; height: auto; max-height: 280px; display: block; }
-.subgrid { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
+.subgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 #workers .subgrid { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
 .budget-line { margin-bottom: 8px; }
 .approval { margin-bottom: 10px; }

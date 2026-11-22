@@ -62,6 +62,7 @@ class SuccessiveHalvingPruner:
             total_steps=cohort.total_steps,
             goal_threshold=cohort.goal_threshold,
             observations=competing,
+            decided_rungs=cohort.decided_rungs,
         )
         verdicts: list[PruneVerdict] = []
         alive = {
@@ -104,7 +105,7 @@ class SuccessiveHalvingPruner:
         verdicts = []
         for rank, o in enumerate(ranked):
             rid = o.record.spec.run_id
-            if rid not in alive:
+            if rid not in alive or f"{rid}:{rung_index}" in cohort.decided_rungs:
                 continue
             value = _value_at(o, step)
             evidence = {

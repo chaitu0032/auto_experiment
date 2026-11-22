@@ -209,3 +209,27 @@ def test_user_stop_flag_stops_the_loop(tmp_path: Path) -> None:
         RunStatus.SOLVED,
         RunStatus.LOST,
     }
+
+
+def test_answered_code_change_is_delivered_to_a_worker(finished: StateLayout) -> None:
+    from autoexp.core.models import ApprovalKind, ApprovalStatus, InboxKind
+    from autoexp.master import phases
+    from autoexp.state.approvals import FileApprovalStore
+    from autoexp.worker.state import list_workers
+
+    store = FileApprovalStore(finished)
+    request = store.request(
+        ApprovalKind.CODE_CHANGE,
+        "clip obs",
+        {"diff": "--- a"},
+        "decision:llm",
+        approval_id="code-r1-1",
+    )
+    master, _ = _master(loop_config(), finished.root)
+    deps = master._d  # noqa: SLF001 - exercising one phase directly
+    phases.deliver_approval_results(deps, list_workers(finished))
+    assert not deps.inbox.exists(WorkerId("w1"), "code-r1-1-result"), "pending is not delivered"
+    store.answer(request.approval_id, ApprovalStatus.APPROVED)
+    phases.deliver_approval_results(deps, list_workers(finished))
+    (message,) = [m for m in deps.inbox.pending(WorkerId("w1")) if m.msg_id == "code-r1-1-result"]
+    assert message.kind is InboxKind.APPROVAL_RESULT and message.body["diff"] == "--- a"

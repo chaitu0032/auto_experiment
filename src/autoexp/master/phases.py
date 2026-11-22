@@ -274,7 +274,11 @@ def prune(
         for r in members
     )
     cohort = Cohort(
-        round_index, d.config.trainer.total_steps, d.config.goal.threshold, observations
+        round_index,
+        d.config.trainer.total_steps,
+        d.config.goal.threshold,
+        observations,
+        decided_rungs=state.seen_rungs,
     )
     result = d.pruning.run(cohort)
     seen_prunes, seen_rungs = set(state.seen_prunes), set(state.seen_rungs)
@@ -704,6 +708,32 @@ def schedule(
 
 
 # ---------------------------------------------------------------------- steer
+
+
+def deliver_approval_results(d: MasterDeps, workers: tuple[WorkerRecord, ...]) -> None:
+    """Answered code-change approvals go to the first worker's coding agent."""
+    if not workers:
+        return
+    target = sorted(workers, key=lambda w: w.worker_id)[0]
+    for approval in d.approvals.all():
+        if approval.kind is not ApprovalKind.CODE_CHANGE or approval.status.value == "pending":
+            continue
+        msg_id = f"{approval.approval_id}-result"
+        if d.inbox.exists(target.worker_id, msg_id):
+            continue
+        _send(
+            d,
+            workers,
+            target.worker_id,
+            msg_id,
+            InboxKind.APPROVAL_RESULT,
+            {
+                "approval_id": approval.approval_id,
+                "status": approval.status.value,
+                "summary": approval.summary,
+                "diff": approval.payload.get("diff", ""),
+            },
+        )
 
 
 def nudge(

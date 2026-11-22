@@ -107,7 +107,10 @@ def get_overview(layout: StateLayout) -> OverviewDTO:
             for r in records
             if r.worker_id == w.worker_id and not r.status.is_terminal
         ]
-        workers.append(views.worker_row(w, runs))
+        row = views.worker_row(w, runs)
+        if row["state"] == "working" and not runs:
+            row = WorkerDTO(**{**row, "state": "idle"})  # its runs have all ended
+        workers.append(row)
     finding_raw = read_json(layout.finding_json)
     return OverviewDTO(
         experiment_id=str(experiment.get("experiment_id", ""))

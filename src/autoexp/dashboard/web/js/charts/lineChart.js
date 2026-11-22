@@ -4,6 +4,15 @@
 
 import { s } from "../dom.js";
 
+/** Axis label with precision that suits the value's magnitude. */
+export function tick(value) {
+  const abs = Math.abs(value);
+  if (abs >= 100) return value.toFixed(0);
+  if (abs >= 1) return value.toFixed(1);
+  if (abs === 0) return "0";
+  return value.toPrecision(2);
+}
+
 const PALETTE = ["#58a6ff", "#3fb950", "#d29922", "#f85149", "#bc8cff", "#39c5cf", "#ff7b72", "#a5d6ff"];
 
 /**
@@ -29,8 +38,8 @@ export function lineChart({ series, width = 720, height = 260, yLabel = "", refe
   svg.append(
     s("line", { class: "axis", x1: pad.left, y1: height - pad.bottom, x2: width - pad.right, y2: height - pad.bottom }),
     s("line", { class: "axis", x1: pad.left, y1: pad.top, x2: pad.left, y2: height - pad.bottom }),
-    s("text", { x: 4, y: pad.top + 4 }, y1.toFixed(0)),
-    s("text", { x: 4, y: height - pad.bottom }, y0.toFixed(0)),
+    s("text", { x: 4, y: pad.top + 4 }, tick(y1)),
+    s("text", { x: 4, y: height - pad.bottom }, tick(y0)),
     s("text", { x: width - pad.right, y: height - 8, "text-anchor": "end" }, `step ${Math.round(x1).toLocaleString()}`),
   );
   if (reference) {

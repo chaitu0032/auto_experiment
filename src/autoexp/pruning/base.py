@@ -16,6 +16,8 @@ class Cohort:
     total_steps: int
     goal_threshold: float
     observations: tuple[Observation, ...]
+    # "<run_id>:<rung>" pairs already kept at that rung; a rung decision is final.
+    decided_rungs: frozenset[str] = frozenset()
 
 
 @runtime_checkable

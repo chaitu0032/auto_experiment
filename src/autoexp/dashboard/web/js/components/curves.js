@@ -26,8 +26,10 @@ export function renderCurves(root, state) {
     h("h2", {}, "Curves ", h("span", { class: "muted" }, ids.length ? ids.join(", ") : "select runs")),
     lineChart({ series: returns, yLabel: "rolling return", reference }),
     h("div", { class: "subgrid" },
-      h("div", { class: "span-2" }, lineChart({ series: valueLoss, yLabel: "value loss", height: 160 })),
-      h("div", {}, lineChart({ series: kl, yLabel: "approx KL", height: 160, width: 360 })),
+      h("div", {}, h("div", { class: "muted" }, "value loss"),
+        lineChart({ series: valueLoss, yLabel: "value loss", height: 200 })),
+      h("div", {}, h("div", { class: "muted" }, "approx KL"),
+        lineChart({ series: kl, yLabel: "approx KL", height: 200 })),
     ),
   );
 }

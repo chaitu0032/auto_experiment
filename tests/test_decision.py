@@ -233,3 +233,19 @@ def test_narrative() -> None:
     failing = LLMDecisionEngine(_LLM(LLMError("x")), DeterministicDecisionEngine())
     assert failing.narrate(_ctx([rec], {"r0001": s}), "goal") is None
     assert DeterministicDecisionEngine().narrate(_ctx([rec], {"r0001": s}), "goal") is None
+
+
+def test_finding_names_runs_that_reached_the_goal_without_a_winner() -> None:
+    from autoexp.master.finding import build_finding
+
+    done, s1 = _run(1, RunStatus.COMPLETED, 490.0, config=BASE)
+    failed, s2 = _run(
+        2, RunStatus.COMPLETED, 300.0, config=BASE, seed=2, purpose=RunPurpose.SEED_CHECK
+    )
+    finding = build_finding(
+        _ctx([done, failed], {"r0001": s1, "r0002": s2}), "max_rounds", "4 rounds", (), "why"
+    )
+    assert "Runs that reached it: r0001 (seed 1)" in finding.text
+    assert finding.winner_config is None and "### Why" in finding.text
+    winner_free = build_finding(_ctx([failed], {"r0002": s2}), "max_rounds", "x", (), None)
+    assert "No run reached the goal." in winner_free.text

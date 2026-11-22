@@ -34,3 +34,11 @@ test("feed detail shows evidence, not the repeated reason", async () => {
   );
   assert.equal(detail({ kind: "stopped", data: {} }), "");
 });
+
+test("chart ticks keep small values readable", async () => {
+  const { tick } = await import("../../src/autoexp/dashboard/web/js/charts/lineChart.js");
+  assert.equal(tick(347.2), "347");
+  assert.equal(tick(2.345), "2.3");
+  assert.equal(tick(0.01234), "0.012");
+  assert.equal(tick(0), "0");
+});
