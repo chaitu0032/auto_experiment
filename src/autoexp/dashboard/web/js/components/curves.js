@@ -3,11 +3,14 @@
 import { lineChart } from "../charts/lineChart.js";
 import { h, mount } from "../dom.js";
 
+/** Selected runs; else the running ones; else every run of the latest round. */
 export function curveRunIds(state) {
   const runs = state.overview?.runs ?? [];
-  return state.selectedRunIds.length
-    ? state.selectedRunIds
-    : runs.filter((r) => r.status === "running").map((r) => r.run_id);
+  if (state.selectedRunIds.length) return state.selectedRunIds;
+  const running = runs.filter((r) => r.status === "running");
+  if (running.length) return running.map((r) => r.run_id);
+  const latest = Math.max(0, ...runs.map((r) => r.round_index));
+  return runs.filter((r) => r.round_index === latest).map((r) => r.run_id);
 }
 
 export function renderCurves(root, state) {
@@ -22,7 +25,7 @@ export function renderCurves(root, state) {
     root,
     h("h2", {}, "Curves ", h("span", { class: "muted" }, ids.length ? ids.join(", ") : "select runs")),
     lineChart({ series: returns, yLabel: "rolling return", reference }),
-    h("div", { class: "grid", style: "padding:0" },
+    h("div", { class: "subgrid" },
       h("div", { class: "span-2" }, lineChart({ series: valueLoss, yLabel: "value loss", height: 160 })),
       h("div", {}, lineChart({ series: kl, yLabel: "approx KL", height: 160, width: 360 })),
     ),

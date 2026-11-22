@@ -302,7 +302,8 @@ times of the state files the overview depends on. `/api/stream` pushes a
 `version` event whenever that value changes. The UI then refetches the
 overview, any events after its `next_seq` cursor, incremental curves for the
 runs on screen, and the pane tails. If the stream fails, the UI polls the
-overview every 3 s and tries the stream again after 15 s.
+overview every 3 s and tries the stream again after 15 s. `?refresh=poll` in
+the page URL forces polling.
 
 **Frontend** (`dashboard/web/`, plain modern JavaScript ES modules, no build
 step, no third-party code):

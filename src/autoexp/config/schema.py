@@ -100,6 +100,8 @@ class StopConfig:
     no_improvement_rounds: int
     crash_limit: int
     max_rounds: int
+    stop_on_llm_budget: bool = True
+    min_improvement: float = 1.0  # best-return gain that counts as an improved round
 
 
 class WorkerRuntimeKind(StrEnum):

@@ -52,6 +52,12 @@ class FakeHerdr:
     def pane_exists(self, pane_id: str) -> bool:
         return pane_id in self._panes
 
+    def rename(self, pane_id: str, label: str) -> None:
+        self._panes[pane_id].sent.append(f"rename:{label}")
+
+    def close(self, pane_id: str) -> None:
+        self._panes.pop(pane_id, None)
+
     # test helpers
     def set_output(self, pane_id: str, text: str) -> None:
         self._panes[pane_id].output = text

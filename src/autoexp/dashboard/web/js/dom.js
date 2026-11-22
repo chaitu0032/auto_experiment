@@ -1,10 +1,13 @@
 // Tiny DOM helpers. All data is inserted as text (textContent), never as HTML,
-// so values from the state directory cannot inject markup.
+// so values from the state directory cannot inject markup. Styles are applied
+// through CSSOM (`style: {width: "40%"}`), which the page's CSP allows, never
+// as inline style attributes, which it blocks.
 
 /**
  * Create an element.
  * @param {string} tag
- * @param {Record<string, unknown>} [attrs] attributes; `on*` keys become listeners
+ * @param {Record<string, unknown>} [attrs] attributes; `on*` keys become listeners,
+ *   `style` is an object of CSS properties
  * @param {...(Node|string|number|null|undefined|false)} children
  * @returns {HTMLElement}
  */
@@ -16,6 +19,8 @@ export function h(tag, attrs = {}, ...children) {
       el.addEventListener(key.slice(2).toLowerCase(), value);
     } else if (key === "class") {
       el.className = String(value);
+    } else if (key === "style" && typeof value === "object") {
+      Object.assign(el.style, value);
     } else {
       el.setAttribute(key, value === true ? "" : String(value));
     }

@@ -89,12 +89,14 @@ llm_cost_usd = 2.0
 no_improvement_rounds = 3
 crash_limit = 3
 max_rounds = 6
+min_improvement = 1.0          # best-return gain that counts as an improved round
+stop_on_llm_budget = true      # with llm.engine = "llm"; false = continue deterministically
 
 [workers]
 count = 2
 runs_per_worker = 2
 runtime = "claude"             # "claude" (coding agent) or "shell" (deterministic)
-agent_command = ["claude"]
+agent_command = ["claude", "--model", "sonnet"]
 
 [devices]
 slots = ["cpu0", "cpu1", "cpu2", "cpu3"]
@@ -109,7 +111,7 @@ workspace_label = "autoexp"
 
 [llm]
 engine = "llm"                 # "llm" or "deterministic"
-command = ["claude", "-p", "--output-format", "json"]
+command = ["claude", "-p", "--output-format", "json", "--model", "sonnet"]
 timeout_s = 120
 
 [master]
